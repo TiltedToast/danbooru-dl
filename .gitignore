@@ -1,0 +1,11 @@
+# Pycharm files
+**/.idea
+**/__pycache__
+
+# Output files
+**/output
+
+# Other Project related files
+*.spec
+**/build
+**/dist
