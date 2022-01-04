@@ -40,20 +40,6 @@ def download_url(url: str, save_location: str):
         shutil.copyfileobj(r.raw, f)
 
 
-class DownloadWorker(Thread):
-    def __init__(self, queue: Queue):
-        Thread.__init__(self)
-        self.queue = queue
-
-    def run(self):
-        while True:
-            url, save_location = self.queue.get()
-            try:
-                download_url(url, save_location)
-            finally:
-                self.queue.task_done()
-
-
 def add_posts_to_list(page_amount_total, tag):
     j = 0
     posts = []
@@ -70,18 +56,6 @@ def add_posts_to_list(page_amount_total, tag):
     return posts
 
 
-def write_posts_to_file(page_amount_total, tag, file_location):
-    with open(file_location, "w+") as f:
-        for i in range(int(page_amount_total)):
-            r = requests.get(f"{BASE_URL}/posts.json?page={i + 1}&tags={tag}")
-            if r.status_code == 200:
-                data = json.loads(r.text)
-                for post in data:
-                    if f"{post['file_url']} {post['id']} {post['rating']}\n" not in f.readlines():
-                        f.write(f"{post['file_url']} {post['id']} {post['rating']}\n")
-    f.close()
-
-
 @click.command()
 @click.option("--tag", "-t", prompt="Tag", help="Tag to search for")
 @click.option("--output", "-o", prompt="Output Directory", help="Output Directory, defaults to output folder in "
@@ -89,9 +63,7 @@ def write_posts_to_file(page_amount_total, tag, file_location):
 @click.option("-safe", prompt="Safe", help="Safe, defaults to true", default=True)
 @click.option("-risky", prompt="Risky", help="Risky, defaults to false", default=False)
 @click.option("-explicit", prompt="Explicit", help="Explicit, defaults to false", default=False)
-@click.option("-thread_num", prompt="Amount of threads used for downloading", help="Amount of threads, defaults to 4",
-              default=4)
-def main(tag: str, output: str = "output", safe: str = True, risky=False, explicit: str = False, thread_num=4):
+def main(tag: str, output: str = "output", safe: str = True, risky=False, explicit: str = False):
     """
     Search Danbooru for images with a given tag and download them to the output directory
     """
@@ -114,72 +86,38 @@ def main(tag: str, output: str = "output", safe: str = True, risky=False, explic
 
     os.mkdir(output) if not os.path.isdir(output) else None
 
-    # write_posts_to_file(page_amount_total, tag, f"tmp.txt")
-    posts = add_posts_to_list(page_amount_total, tag)
+    for i in range(int(page_amount_total)):
+        r = requests.get(f"{BASE_URL}/posts.json?page={i + 1}&tags={tag}")
+        if r.status_code == 200:
+            data = json.loads(r.text)
 
-    queue = Queue()
+            try:
+                for post in data:
+                    # Download SFW Images
+                    if safe and post["rating"] == "s" and not os.path.exists(f"{output}/safe/{post['id']}.{post['file_ext']}"):
+                        if not os.path.isdir(f"{output}/safe"):
+                            os.mkdir(f"{output}/safe")
+                        download_url(post["file_url"], f"{output}/safe/{post['id']}.{post['file_ext']}")
+                        click.echo(f"[SAFE] Downloaded {post['id']}.{post['file_ext']}")
 
-    for i in range(thread_num):
-        worker = DownloadWorker(queue)
-        worker.daemon = True
-        worker.start()
+                        # Download Risky Images
+                    elif risky and post["rating"] == "q" and not os.path.exists(
+                            f"{output}/risky/{post['id']}.{post['file_ext']}"):
+                        if not os.path.isdir(f"{output}/risky"):
+                            os.mkdir(f"{output}/risky")
+                        download_url(post["file_url"], f"{output}/risky/{post['id']}.{post['file_ext']}")
+                        click.echo(f"[RISKY] Downloaded {post['id']}.{post['file_ext']}")
 
-    for post in posts:
-        # try:
-            if safe and post["rating"] == "s" and not os.path.exists(f"{output}/safe/{post['id']}.{post['file_ext']}"):
-                if not os.path.isdir(f"{output}/safe"):
-                    os.mkdir(f"{output}/safe")
+                        # Download Explicit Images
+                    elif explicit and post["rating"] == "e" and not os.path.exists(
+                            f"{output}/explicit/{post['id']}.{post['file_ext']}"):
+                        if not os.path.isdir(f"{output}/explicit"):
+                            os.mkdir(f"{output}/explicit")
+                        download_url(post["file_url"], f"{output}/explicit/{post['id']}.{post['file_ext']}")
+                        click.echo(f"[EXPLICIT] Downloaded {post['id']}.{post['file_ext']}")
 
-                queue.put((post["file_url"], f"{output}/safe/{post['id']}.{post['file_ext']}"))
-                click.echo(f"[SAFE] Downloaded {post['id']}.{post['file_ext']}")
-
-            elif risky and post["rating"] == "q" and not os.path.exists(
-                    f"{output}/risky/{post['id']}.{post['file_ext']}"):
-                if not os.path.isdir(f"{output}/risky"):
-                    os.mkdir(f"{output}/risky")
-
-                queue.put((post["file_url"], f"{output}/risky/{post['id']}.{post['file_ext']}"))
-                click.echo(f"[RISKY] Downloaded {post['id']}.{post['file_ext']}")
-
-            elif explicit and post["rating"] == "e" and not os.path.exists(
-                    f"{output}/explicit/{post['id']}.{post['file_ext']}"):
-                if not os.path.isdir(f"{output}/explicit"):
-                    os.mkdir(f"{output}/explicit")
-
-                queue.put((post["file_url"], f"{output}/explicit/{post['id']}.{post['file_ext']}"))
-                click.echo(f"[EXPLICIT] Downloaded {post['id']}.{post['file_ext']}")
-
-            queue.join()
-
-        # except KeyError:
-        #     pass
-
-
-        # try:
-        #     for post in data:
-        #         # Download SFW Images
-        #         if safe and post["rating"] == "s" and not os.path.exists(f"{output}/safe/{post['id']}.{post['file_ext']}"):
-        #             if not os.path.isdir(f"{output}/safe"):
-        #                 os.mkdir(f"{output}/safe")
-        #             download_url(post["file_url"], f"{output}/safe/{post['id']}.{post['file_ext']}")
-        #             click.echo(f"[SAFE] Downloaded {post['id']}.{post['file_ext']}")
-        #
-        #         # Download Risky Images
-        #         elif risky and post["rating"] == "q" and not os.path.exists(f"{output}/risky/{post['id']}.{post['file_ext']}"):
-        #             if not os.path.isdir(f"{output}/risky"):
-        #                 os.mkdir(f"{output}/risky")
-        #             download_url(post["file_url"], f"{output}/risky/{post['id']}.{post['file_ext']}")
-        #             click.echo(f"[RISKY] Downloaded {post['id']}.{post['file_ext']}")
-        #
-        #         # Download Explicit Images
-        #         elif explicit and post["rating"] == "e" and not os.path.exists(f"{output}/explicit/{post['id']}.{post['file_ext']}"):
-        #             if not os.path.isdir(f"{output}/explicit"):
-        #                 os.mkdir(f"{output}/explicit")
-        #             download_url(post["file_url"], f"{output}/explicit/{post['id']}.{post['file_ext']}")
-        #             click.echo(f"[EXPLICIT] Downloaded {post['id']}.{post['file_ext']}")
-        #
-        # except KeyError:
-        #     pass
+            except KeyError:
+                pass
 
 
 if __name__ == "__main__":
