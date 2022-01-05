@@ -1,22 +1,17 @@
 import json
-import multiprocessing.pool
-import typing
+import time
 import requests
 import shutil
 import os
 import sys
 import click
-from time import sleep
-import selenium.common
-import numpy as np
 from queue import Queue
 from threading import Thread
 from urllib.parse import quote_plus
-from multiprocessing import Pool
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
+import multiprocessing
 
 
 def resource_path(relative_path: str) -> str:
@@ -40,7 +35,21 @@ def download_url(url: str, save_location: str):
         shutil.copyfileobj(r.raw, f)
 
 
-def add_posts_to_list(page_amount_total, tag):
+class DownloadWorker(Thread):
+    def __init__(self, queue: Queue):
+        Thread.__init__(self)
+        self.queue = queue
+
+    def run(self):
+        while True:
+            url, save_location = self.queue.get()
+            try:
+                download_url(url, save_location)
+            finally:
+                self.queue.task_done()
+
+
+def add_posts_to_list(page_amount_total, tag, safe, risky, explicit):
     j = 0
     posts = []
     for i in range(int(page_amount_total)):
@@ -49,9 +58,11 @@ def add_posts_to_list(page_amount_total, tag):
             data = json.loads(r.text)
             for post in data:
                 if post not in posts:
-                    posts.append(post)
-                    click.echo(f"Added Post #{j + 1} to the queue")
-                    j += 1
+                    if (safe and post['rating'] == "s") or (risky and post['rating'] == "q") or \
+                            (explicit and post['rating'] == "e"):
+                        posts.append(post)
+                        click.echo(f"Added Post #{j + 1} to the queue")
+                        j += 1
 
     return posts
 
@@ -71,6 +82,7 @@ def main(tag: str, output: str = "output", safe: str = True, risky=False, explic
     chrome_service = Service(resource_path(driver_path))
     chrome_options = webdriver.ChromeOptions()
     chrome_options.add_argument("--log-level=3")
+    chrome_options.add_argument("--headless")
     driver = webdriver.Chrome(service=chrome_service, options=chrome_options)
 
     driver.get(BASE_URL + f"/posts?tags={quote_plus(tag)}")
@@ -86,38 +98,47 @@ def main(tag: str, output: str = "output", safe: str = True, risky=False, explic
 
     os.mkdir(output) if not os.path.isdir(output) else None
 
-    for i in range(int(page_amount_total)):
-        r = requests.get(f"{BASE_URL}/posts.json?page={i + 1}&tags={tag}")
-        if r.status_code == 200:
-            data = json.loads(r.text)
+    posts = add_posts_to_list(page_amount_total, tag, safe, risky, explicit)
+    thread_count = multiprocessing.cpu_count()
+    queue = Queue()
 
-            try:
-                for post in data:
-                    # Download SFW Images
-                    if safe and post["rating"] == "s" and not os.path.exists(f"{output}/safe/{post['id']}.{post['file_ext']}"):
-                        if not os.path.isdir(f"{output}/safe"):
-                            os.mkdir(f"{output}/safe")
-                        download_url(post["file_url"], f"{output}/safe/{post['id']}.{post['file_ext']}")
-                        click.echo(f"[SAFE] Downloaded {post['id']}.{post['file_ext']}")
+    for i in range(thread_count):
+        worker = DownloadWorker(queue)
+        worker.daemon = True
+        worker.start()
 
-                        # Download Risky Images
-                    elif risky and post["rating"] == "q" and not os.path.exists(
-                            f"{output}/risky/{post['id']}.{post['file_ext']}"):
-                        if not os.path.isdir(f"{output}/risky"):
-                            os.mkdir(f"{output}/risky")
-                        download_url(post["file_url"], f"{output}/risky/{post['id']}.{post['file_ext']}")
-                        click.echo(f"[RISKY] Downloaded {post['id']}.{post['file_ext']}")
+    start_time = time.time()
 
-                        # Download Explicit Images
-                    elif explicit and post["rating"] == "e" and not os.path.exists(
-                            f"{output}/explicit/{post['id']}.{post['file_ext']}"):
-                        if not os.path.isdir(f"{output}/explicit"):
-                            os.mkdir(f"{output}/explicit")
-                        download_url(post["file_url"], f"{output}/explicit/{post['id']}.{post['file_ext']}")
-                        click.echo(f"[EXPLICIT] Downloaded {post['id']}.{post['file_ext']}")
+    for post in posts:
+        try:
+            if safe and post["rating"] == "s" and not os.path.exists(f"{output}/safe/{post['id']}.{post['file_ext']}"):
+                if not os.path.isdir(f"{output}/safe"):
+                    os.mkdir(f"{output}/safe")
 
-            except KeyError:
-                pass
+                queue.put((post["file_url"], f"{output}/safe/{post['id']}.{post['file_ext']}"))
+                # click.echo(f"[SAFE] Downloaded {post['id']}.{post['file_ext']}")
+
+            elif risky and post["rating"] == "q" and not os.path.exists(
+                    f"{output}/risky/{post['id']}.{post['file_ext']}"):
+                if not os.path.isdir(f"{output}/risky"):
+                    os.mkdir(f"{output}/risky")
+
+                queue.put((post["file_url"], f"{output}/risky/{post['id']}.{post['file_ext']}"))
+                # click.echo(f"[RISKY] Downloaded {post['id']}.{post['file_ext']}")
+
+            elif explicit and post["rating"] == "e" and not os.path.exists(
+                    f"{output}/explicit/{post['id']}.{post['file_ext']}"):
+                if not os.path.isdir(f"{output}/explicit"):
+                    os.mkdir(f"{output}/explicit")
+
+                queue.put((post["file_url"], f"{output}/explicit/{post['id']}.{post['file_ext']}"))
+                # click.echo(f"[EXPLICIT] Downloaded {post['id']}.{post['file_ext']}")
+        except KeyError:
+            continue
+
+    click.echo("Downloading...")
+    queue.join()
+    click.echo(f"Finished downloading after {round(time.time() - start_time, 2)} seconds")
 
 
 if __name__ == "__main__":
