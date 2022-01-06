@@ -107,8 +107,6 @@ def main(tag: str, output: str = "output", safe: str = True, risky=False, explic
         worker.daemon = True
         worker.start()
 
-    start_time = time.time()
-
     for post in posts:
         try:
             if safe and post["rating"] == "s" and not os.path.exists(f"{output}/safe/{post['id']}.{post['file_ext']}"):
@@ -137,6 +135,7 @@ def main(tag: str, output: str = "output", safe: str = True, risky=False, explic
             continue
 
     click.echo("Downloading...")
+    start_time = time.time()
     queue.join()
     click.echo(f"Finished downloading after {round(time.time() - start_time, 2)} seconds")
 
