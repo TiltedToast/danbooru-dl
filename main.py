@@ -8,9 +8,7 @@ import click
 from queue import Queue
 from threading import Thread
 from urllib.parse import quote_plus
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
+from bs4 import BeautifulSoup
 import multiprocessing
 
 
@@ -79,22 +77,16 @@ def main(tag: str, output: str = "output", safe: str = True, risky=False, explic
     Search Danbooru for images with a given tag and download them to the output directory
     """
 
-    chrome_service = Service(resource_path(driver_path))
-    chrome_options = webdriver.ChromeOptions()
-    chrome_options.add_argument("--log-level=3")
-    chrome_options.add_argument("--headless")
-    driver = webdriver.Chrome(service=chrome_service, options=chrome_options)
+    r = requests.get(BASE_URL + f"/posts?tags={quote_plus(tag)}")
+    soup = BeautifulSoup(r.text, "html.parser")
+    
+    navbar_nums = soup.find_all("a", class_="paginator-page desktop-only")
 
-    driver.get(BASE_URL + f"/posts?tags={quote_plus(tag)}")
-
-    navbar_nums = driver.find_elements(By.CLASS_NAME, "paginator-page.desktop-only")
     try:
         page_amount_total = navbar_nums[-1].text
     except IndexError:
         click.echo("This is not a valid tag!")
-        driver.close()
         return
-    driver.close()
 
     os.mkdir(output) if not os.path.isdir(output) else None
 
