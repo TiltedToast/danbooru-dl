@@ -5,6 +5,4 @@ An interactive CLI tool for downloading images off of danbooru (Do note that eve
 # Build it yourself
 If you want to compile the program yourself you'll need `pyinstaller`.
 
-`pyi-makespec main.py --onefile --add-binary "driver/chromedriver.exe;driver\" --name danbooru-dl`
-
-`pyinstaller --clean danbooru-dl.spec`
+`pyinstaller --clean --onefile --name danbooru-dl main.py`
