@@ -104,8 +104,6 @@ def main(tag: str, output: str = "output", safe: str = True, risky=False, explic
     """
     Search Danbooru for images with a given tag and download them to the output directory
     """
-    start_time = time.time()
-
     r = requests.get(BASE_URL + f"/posts?tags={quote_plus(tag)}")
     soup = BeautifulSoup(r.text, "html.parser")
 
@@ -160,6 +158,7 @@ def main(tag: str, output: str = "output", safe: str = True, risky=False, explic
             continue
 
     click.echo(f"Downloading {len(posts)} posts...")
+    start_time = time.time()
     queue.join()
     click.echo(f"Finished downloading after {round(time.time() - start_time, 2)} seconds")
 
