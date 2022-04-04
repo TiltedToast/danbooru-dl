@@ -10,6 +10,7 @@ from threading import Thread
 from urllib.parse import quote_plus
 from bs4 import BeautifulSoup
 import multiprocessing
+from progress.bar import Bar
 
 
 def resource_path(relative_path: str) -> str:
@@ -25,6 +26,7 @@ def resource_path(relative_path: str) -> str:
 driver_path = "driver/chromedriver.exe"
 BASE_URL = "http://danbooru.donmai.us"
 posts = []
+total_queue_size = 0
 
 
 def download_url(url: str, save_location: str):
@@ -36,6 +38,8 @@ def download_url(url: str, save_location: str):
 
 
 class DownloadWorker(Thread):
+    global dl_bar
+
     def __init__(self, queue: Queue):
         Thread.__init__(self)
         self.queue = queue
@@ -45,6 +49,7 @@ class DownloadWorker(Thread):
             url, save_location = self.queue.get()
             try:
                 download_url(url, save_location)
+                dl_bar.next()
             finally:
                 self.queue.task_done()
 
@@ -61,7 +66,8 @@ class DownloadWorker2(Thread):
         while True:
             i, tag, safe, risky, explicit = self.queue.get()
             try:
-                r = requests.get(f"{BASE_URL}/posts.json?page={i + 1}&tags={tag}")
+                r = requests.get(
+                    f"{BASE_URL}/posts.json?page={i + 1}&tags={tag}")
                 if r.status_code == 200:
                     data = json.loads(r.text)
                     for post in data:
@@ -70,16 +76,19 @@ class DownloadWorker2(Thread):
                                     (explicit and post['rating'] == "e"):
                                 posts.append(post)
             finally:
+                pages_bar.next()
                 self.queue.task_done()
 
 
 def add_posts_to_list(page_amount_total, tag, safe, risky, explicit):
-    global posts
+    global posts, pages_bar
 
     thread_count = multiprocessing.cpu_count()
     queue = Queue()
+    pages_bar = Bar(
+        f'Adding {page_amount_total} pages worth of posts to queue', max=page_amount_total)
 
-    for k in range(thread_count):
+    for _ in range(thread_count):
         worker = DownloadWorker2(queue)
         worker.daemon = True
         worker.start()
@@ -90,6 +99,7 @@ def add_posts_to_list(page_amount_total, tag, safe, risky, explicit):
         j += 1
 
     queue.join()
+    pages_bar.finish()
     return posts
 
 
@@ -101,6 +111,7 @@ def add_posts_to_list(page_amount_total, tag, safe, risky, explicit):
 @click.option("-risky", prompt="Risky", help="Risky, defaults to false", default=False)
 @click.option("-explicit", prompt="Explicit", help="Explicit, defaults to false", default=False)
 def main(tag: str, output: str = "output", safe: str = True, risky=False, explicit: str = False):
+    global dl_bar, total_queue_size
     """
     Search Danbooru for images with a given tag and download them to the output directory
     """
@@ -110,19 +121,18 @@ def main(tag: str, output: str = "output", safe: str = True, risky=False, explic
     navbar_nums = soup.find_all("a", class_="paginator-page desktop-only")
 
     try:
-        page_amount_total = navbar_nums[-1].text
+        page_amount_total = int(navbar_nums[-1].text)
     except IndexError:
         click.echo("This is not a valid tag!")
         return
 
     os.mkdir(output) if not os.path.isdir(output) else None
 
-    click.echo(f"Found {page_amount_total} pages worth of posts, adding to queue...")
     posts = add_posts_to_list(page_amount_total, tag, safe, risky, explicit)
     thread_count = multiprocessing.cpu_count()
     queue = Queue()
 
-    for i in range(thread_count):
+    for _ in range(thread_count):
         worker = DownloadWorker(queue)
         worker.daemon = True
         worker.start()
@@ -135,7 +145,7 @@ def main(tag: str, output: str = "output", safe: str = True, risky=False, explic
 
                 queue.put(
                     (post["file_url"], f"{output}/safe/{post['id']}.{post['file_ext']}"))
-                # click.echo(f"[SAFE] Downloaded {post['id']}.{post['file_ext']}")
+                total_queue_size += 1
 
             elif risky and post["rating"] == "q" and not os.path.exists(
                     f"{output}/risky/{post['id']}.{post['file_ext']}"):
@@ -144,7 +154,7 @@ def main(tag: str, output: str = "output", safe: str = True, risky=False, explic
 
                 queue.put(
                     (post["file_url"], f"{output}/risky/{post['id']}.{post['file_ext']}"))
-                # click.echo(f"[RISKY] Downloaded {post['id']}.{post['file_ext']}")
+                total_queue_size += 1
 
             elif explicit and post["rating"] == "e" and not os.path.exists(
                     f"{output}/explicit/{post['id']}.{post['file_ext']}"):
@@ -153,14 +163,19 @@ def main(tag: str, output: str = "output", safe: str = True, risky=False, explic
 
                 queue.put(
                     (post["file_url"], f"{output}/explicit/{post['id']}.{post['file_ext']}"))
-                # click.echo(f"[EXPLICIT] Downloaded {post['id']}.{post['file_ext']}")
+                total_queue_size += 1
         except KeyError:
             continue
 
-    click.echo(f"Downloading {len(posts)} posts...")
     start_time = time.time()
+
+    dl_bar = Bar(f"Downloading {total_queue_size} posts",
+                 max=total_queue_size, suffix='%(index)d/%(max)d (%(percent).2f%%)')
     queue.join()
-    click.echo(f"Finished downloading after {round(time.time() - start_time, 2)} seconds")
+    dl_bar.finish()
+
+    click.echo(
+        f"Finished downloading after {round(time.time() - start_time, 2)} seconds")
 
 
 if __name__ == "__main__":
