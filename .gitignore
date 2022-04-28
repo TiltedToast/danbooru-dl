@@ -11,3 +11,6 @@
 **/dist
 main-threaded.py
 **/driver
+Scripts
+Lib
+*.cfg
