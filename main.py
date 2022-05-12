@@ -1,15 +1,16 @@
 import json
-import time
-import requests
-import shutil
+import multiprocessing
 import os
+import shutil
 import sys
-import click
+import time
 from queue import Queue
 from threading import Thread
 from urllib.parse import quote_plus
+
+import click
+import requests
 from bs4 import BeautifulSoup
-import multiprocessing
 from progress.bar import Bar
 
 
@@ -23,16 +24,14 @@ def resource_path(relative_path: str) -> str:
     return os.path.join(base_path, relative_path)
 
 
-driver_path = "driver/chromedriver.exe"
 BASE_URL = "http://danbooru.donmai.us"
 posts = []
 total_queue_size = 0
 
 
 def download_url(url: str, save_location: str):
-    r = requests.get(url, stream=True, timeout=10,
-                     headers={'User-agent': 'Mozilla/5.0'})
-    with open(save_location, 'wb') as f:
+    r = requests.get(url, stream=True, timeout=10, headers={"User-agent": "Mozilla/5.0"})
+    with open(save_location, "wb") as f:
         r.raw.decode_content = True
         shutil.copyfileobj(r.raw, f)
 
@@ -66,14 +65,16 @@ class DownloadWorker2(Thread):
         while True:
             i, tag, safe, risky, explicit = self.queue.get()
             try:
-                r = requests.get(
-                    f"{BASE_URL}/posts.json?page={i + 1}&tags={tag}")
+                r = requests.get(f"{BASE_URL}/posts.json?page={i + 1}&tags={tag}")
                 if r.status_code == 200:
                     data = json.loads(r.text)
                     for post in data:
                         if post not in posts:
-                            if (safe and post['rating'] == "s") or (risky and post['rating'] == "q") or \
-                                    (explicit and post['rating'] == "e"):
+                            if (
+                                (safe and post["rating"] == "s")
+                                or (risky and post["rating"] == "q")
+                                or (explicit and post["rating"] == "e")
+                            ):
                                 posts.append(post)
             finally:
                 pages_bar.next()
@@ -85,8 +86,7 @@ def add_posts_to_list(page_amount_total, tag, safe, risky, explicit):
 
     thread_count = multiprocessing.cpu_count()
     queue = Queue()
-    pages_bar = Bar(
-        f'Adding {page_amount_total} pages worth of posts to queue', max=page_amount_total)
+    pages_bar = Bar(f"Adding {page_amount_total} pages worth of posts to queue", max=page_amount_total)
 
     for _ in range(thread_count):
         worker = DownloadWorker2(queue)
@@ -105,8 +105,13 @@ def add_posts_to_list(page_amount_total, tag, safe, risky, explicit):
 
 @click.command()
 @click.option("--tag", "-t", prompt="Tag", help="Tag to search for")
-@click.option("--output", "-o", prompt="Output Directory", help="Output Directory, defaults to output folder in "
-                                                                "current directory", default="output")
+@click.option(
+    "--output",
+    "-o",
+    prompt="Output Directory",
+    help="Output Directory, defaults to output folder in " "current directory",
+    default="output",
+)
 @click.option("-safe", prompt="Safe", help="Safe, defaults to true", default=True)
 @click.option("-risky", prompt="Risky", help="Risky, defaults to false", default=False)
 @click.option("-explicit", prompt="Explicit", help="Explicit, defaults to false", default=False)
@@ -143,39 +148,42 @@ def main(tag: str, output: str = "output", safe: str = True, risky=False, explic
                 if not os.path.isdir(f"{output}/safe"):
                     os.mkdir(f"{output}/safe")
 
-                queue.put(
-                    (post["file_url"], f"{output}/safe/{post['id']}.{post['file_ext']}"))
+                queue.put((post["file_url"], f"{output}/safe/{post['id']}.{post['file_ext']}"))
                 total_queue_size += 1
 
-            elif risky and post["rating"] == "q" and not os.path.exists(
-                    f"{output}/risky/{post['id']}.{post['file_ext']}"):
+            elif (
+                risky
+                and post["rating"] == "q"
+                and not os.path.exists(f"{output}/risky/{post['id']}.{post['file_ext']}")
+            ):
                 if not os.path.isdir(f"{output}/risky"):
                     os.mkdir(f"{output}/risky")
 
-                queue.put(
-                    (post["file_url"], f"{output}/risky/{post['id']}.{post['file_ext']}"))
+                queue.put((post["file_url"], f"{output}/risky/{post['id']}.{post['file_ext']}"))
                 total_queue_size += 1
 
-            elif explicit and post["rating"] == "e" and not os.path.exists(
-                    f"{output}/explicit/{post['id']}.{post['file_ext']}"):
+            elif (
+                explicit
+                and post["rating"] == "e"
+                and not os.path.exists(f"{output}/explicit/{post['id']}.{post['file_ext']}")
+            ):
                 if not os.path.isdir(f"{output}/explicit"):
                     os.mkdir(f"{output}/explicit")
 
-                queue.put(
-                    (post["file_url"], f"{output}/explicit/{post['id']}.{post['file_ext']}"))
+                queue.put((post["file_url"], f"{output}/explicit/{post['id']}.{post['file_ext']}"))
                 total_queue_size += 1
         except KeyError:
             continue
 
     start_time = time.time()
 
-    dl_bar = Bar(f"Downloading {total_queue_size} posts",
-                 max=total_queue_size, suffix='%(index)d/%(max)d (%(percent).2f%%)')
+    dl_bar = Bar(
+        f"Downloading {total_queue_size} posts", max=total_queue_size, suffix="%(index)d/%(max)d (%(percent).2f%%)"
+    )
     queue.join()
     dl_bar.finish()
 
-    click.echo(
-        f"Finished downloading after {round(time.time() - start_time, 2)} seconds")
+    click.echo(f"Finished downloading after {round(time.time() - start_time, 2)} seconds")
 
 
 if __name__ == "__main__":
